@@ -15,3 +15,5 @@ Next tasks:
  `uv run tensorboard --logdir=runs`
 
  
+ `wait -n .5 nvidia-smi`
+
