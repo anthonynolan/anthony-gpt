@@ -1,1 +1,1 @@
- scp runpod-server:/workspace/models/multihead.torch .
+ scp runpod-server:/workspace/models/multihead.torch models/

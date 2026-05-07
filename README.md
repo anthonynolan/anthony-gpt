@@ -17,3 +17,19 @@ Next tasks:
  
  `wait -n .5 nvidia-smi`
 
+
+# Profiling with Nvidia Nsight
+
+For windows copy ssh config to windows path.
+Copy ssh keys to windows path.
+Install nsight, create connection
+Provide command line arguments to start the training job to nsight
+
+run ps aux to get the pid (on taret machine)
+then run tail -f /proc/<pid>/fd/1
+and/or
+/proc/<pid>/fd/2
+
+Should see the model training:
+ 70%|███████   | 21368/30345 [08:00<02:51, 52.32it/s, loss=4.65, tokens_per_second=1.1e+5, val_loss=4.85]
+
