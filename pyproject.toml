@@ -3,15 +3,13 @@ name = "anthony-gpt"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
-    "bertviz>=1.4.1",
     "ipykernel>=7.2.0",
     "ipywidgets>=8.1.8",
-    "matplotlib>=3.10.8",
     "pandas>=3.0.2",
-    "seaborn>=0.13.2",
-    "tensorboard>=2.20.0",
     "tiktoken>=0.12.0",
-    "torch>=2.11.0",
+    "torch==2.6.0",
+    "tensorboard",
+    "tqdm"
 ]
