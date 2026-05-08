@@ -30,8 +30,9 @@ def tokenise_text(text, enc, device):
     return tokens
 
 
-def load_data(enc, device, context_length, batch_size):
-    with open("complete-jane-austen.txt") as f:
+def load_data(enc, device, context_length, batch_size, training_data_file_name):
+    print(f'training data: {training_data_file_name}')
+    with open(Path('data', training_data_file_name)) as f:
         content = f.read()
         content = " ".join(content.split())
         print(f"content length in chars: {len(content):,}")
@@ -68,6 +69,7 @@ def load_data(enc, device, context_length, batch_size):
 
 def generate(model_dir, file_name, max_words, prompt_text, enc, device, context_length):
     model = load_model(model_dir=model_dir, file_name=file_name)
+    model.eval()
     idx = tokenise_text(prompt_text, enc, device).unsqueeze(0)
     if idx.shape[0] < context_length:
         prompt_text += " " * (context_length - idx.shape[0])
@@ -88,13 +90,13 @@ def generate(model_dir, file_name, max_words, prompt_text, enc, device, context_
 
 
 class SubHead(nn.Module):
-    def __init__(self, sub_head_dimension, d_model, context_length):
+    def __init__(self, sub_head_dimension, d_model, context_length, dropout=.1):
         super().__init__()
 
         self.query = nn.Linear(d_model, sub_head_dimension, bias=False)
         self.key = nn.Linear(d_model, sub_head_dimension, bias=False)
         self.value = nn.Linear(d_model, sub_head_dimension, bias=False)
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(dropout)
         self.tril: torch.Tensor  # just to silence the linter
         self.register_buffer(
             "tril", torch.tril(torch.ones(context_length, context_length))
@@ -117,36 +119,40 @@ class SubHead(nn.Module):
 
 
 class AttnHead(nn.Module):
-    def __init__(self, d_model, n_sub_heads, context_length):
+    def __init__(self, d_model, n_sub_heads, context_length, dropout=.1):
         super().__init__()
         sub_head_dim = d_model // n_sub_heads
+        
+        assert d_model % n_sub_heads == 0
+
         self.sub_heads = nn.ModuleList(
-            [SubHead(sub_head_dim, d_model, context_length) for _ in range(n_sub_heads)]
+            [SubHead(sub_head_dim, d_model, context_length, dropout=dropout) for _ in range(n_sub_heads)]
         )
         self.proj = nn.Linear(d_model, d_model)
 
         self.ln_1 = nn.LayerNorm(d_model)
         self.ln_2 = nn.LayerNorm(d_model)
-        self.ln_3 = nn.LayerNorm(d_model)
-
+        
         self.ffn = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model), nn.ReLU(), nn.Linear(4 * d_model, d_model)
+            nn.Linear(d_model, 4 * d_model), nn.GELU(), nn.Linear(4 * d_model, d_model)
         )
 
-    def forward(self, x):
+        self.dropout = nn.Dropout(dropout)
+
+    def attention(self, x):
         composite_head_output = torch.concat(
             [sub_head(x) for sub_head in self.sub_heads], dim=-1
         )
+        attn_output = self.dropout(self.proj(composite_head_output))
+        return attn_output
 
-        attn_output = self.proj(composite_head_output)
-
-        x = x + self.ln_1(attn_output)
-        x = x + self.ffn(self.ln_2(x))
-        x = self.ln_3(x)
+    def forward(self, x):
+        x = x + self.attention(self.ln_1(x))        
+        x = x + self.dropout(self.ffn(self.ln_2(x)))
         return x
 
 
-class TransformerNameGenerator(nn.Module):
+class GPT(nn.Module):
     def __init__(
         self,
         vocab_size,
@@ -156,6 +162,7 @@ class TransformerNameGenerator(nn.Module):
         n_attn_layers,
         tie_weights,
         device,
+        dropout
     ):
         super().__init__()
         self.token_embedding = nn.Embedding(vocab_size, d_model)
@@ -173,6 +180,8 @@ class TransformerNameGenerator(nn.Module):
         self.llm_model = nn.Linear(d_model, vocab_size)
         self.d_model = d_model
         self.device = device
+        self.ln = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
 
         # Tie the output embedding vectors to those learned at the input
         # increases efficiency. They are from the same space.
@@ -184,12 +193,16 @@ class TransformerNameGenerator(nn.Module):
         token_embeddings = self.token_embedding(idx)  # B, T, d_model
         pos = torch.arange(T, device=self.device)
         positional_embeddings = self.position_embedding(pos)  # T, d_model
-        x = token_embeddings + positional_embeddings
+        
+        x = self.dropout(token_embeddings + positional_embeddings)
+
         assert x.shape == (B, T, self.d_model), (
             f"Incorrect shape after pos and tok emb: {x.shape, B, T, self.d_model}"
         )
         for attn_block in self.attn_blocks:
             x = attn_block(x)
+        x = self.ln(x)
+        
         logits = self.llm_model(x)
         return logits
 
@@ -197,10 +210,15 @@ class TransformerNameGenerator(nn.Module):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--generate", action="store_true")
+    parser.add_argument("--model-file-name", default="multihead.torch")
+    parser.add_argument("--training-data", default="big_book_chunk.txt")
     return parser.parse_args()
 
 
 def main():
+
+    args = parse_args()
+
     enc = tiktoken.get_encoding("gpt2")
     vocab_size = enc.n_vocab
     print(f"vocab_size: {vocab_size:,}")
@@ -222,11 +240,13 @@ def main():
     # experiment parameters
     tie_weights = True
 
-    model_file_name = "multihead.torch"
+    model_file_name = args.model_file_name
+
+    training_data_file_name = args.training_data
 
     single_example = False
     temp_model = False
-
+    dropout = .1
     if torch.cuda.is_available():
         device = "cuda"
     elif torch.backends.mps.is_available():
@@ -235,13 +255,13 @@ def main():
         device = "cpu"
     print(f"device: {device}")
 
-    args = parse_args()
+    
     if args.generate:
         output = generate(model_dir, model_file_name, 50, "", enc, device, context_length)
         print(output)
     else:
 
-        model = TransformerNameGenerator(
+        model = GPT(
             vocab_size,
             context_length,
             d_model,
@@ -249,6 +269,7 @@ def main():
             n_attn_layers=n_attention_layers,
             tie_weights=tie_weights,
             device=device,
+            dropout=dropout
         )
         model.to(device)
 
@@ -259,7 +280,7 @@ def main():
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.01
         )
 
-        loader_train, loader_val = load_data(enc, device, context_length, batch_size)
+        loader_train, loader_val = load_data(enc, device, context_length, batch_size, training_data_file_name)
 
         writer = SummaryWriter()
 
@@ -270,7 +291,8 @@ def main():
         tokens_per_second = 0
         for epoch in range(epochs):
             for i, (xb, yb) in enumerate(pbar):
-                torch.cuda.synchronize()
+                if device == 'cuda':
+                    torch.cuda.synchronize()
                 start = time.time()
                 xb = xb.to(device)
                 yb = yb.to(device)
@@ -305,7 +327,10 @@ def main():
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-                torch.cuda.synchronize()
+
+                if device == 'cuda':
+                    torch.cuda.synchronize()
+
                 step_time = time.time() - start
                 tokens_per_second = batch_size * context_length / step_time
                 # print(tokens_per_second)
