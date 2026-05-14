@@ -13,4 +13,6 @@ dependencies = [
     "tensorboard",
     "tqdm",
     "setuptools<82",
+    "transformers>=5.8.1",
+    "accelerate>=1.13.0",
 ]
