@@ -33,3 +33,4 @@ and/or
 Should see the model training:
  70%|███████   | 21368/30345 [08:00<02:51, 52.32it/s, loss=4.65, tokens_per_second=1.1e+5, val_loss=4.85]
 
+uv run python -m pdb multi-head.py --prompt "tell me a secret"

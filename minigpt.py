@@ -30,14 +30,17 @@ def tokenise_text(text, enc, device):
     return tokens
 
 
-def load_data(enc, device, context_length, batch_size, training_data_file_name):
+def load_data(enc, context_length, batch_size, training_data_file_name):
     print(f'training data: {training_data_file_name}')
     with open(Path('data', training_data_file_name)) as f:
         content = f.read()
         content = " ".join(content.split())
         print(f"content length in chars: {len(content):,}")
         print(f"sample of content: {content[:100]}")
-        encoded_text = tokenise_text(content, enc, device)
+
+        # This tensor is created on cpu. Using move to device during training per batch        
+        encoded_text = torch.tensor(enc.encode(content), dtype=torch.long)
+
         print(f"sample of encoded text: {encoded_text[:100]}")
         print(f"number of tokens: {len(encoded_text):,}")
 
@@ -71,9 +74,6 @@ def generate(model_dir, file_name, max_words, prompt_text, enc, device, context_
     model = load_model(model_dir=model_dir, file_name=file_name)
     model.eval()
     idx = tokenise_text(prompt_text, enc, device).unsqueeze(0)
-    if idx.shape[0] < context_length:
-        prompt_text += " " * (context_length - idx.shape[0])
-        idx = tokenise_text(prompt_text, enc, device).unsqueeze(0)
 
     for _ in range(max_words):
         idx_cond = idx[:, -context_length:]
@@ -90,7 +90,7 @@ def generate(model_dir, file_name, max_words, prompt_text, enc, device, context_
 
 
 class SubHead(nn.Module):
-    def __init__(self, sub_head_dimension, d_model, context_length, dropout=.1):
+    def __init__(self, sub_head_dimension, d_model, context_length, dropout):
         super().__init__()
 
         self.query = nn.Linear(d_model, sub_head_dimension, bias=False)
@@ -103,7 +103,7 @@ class SubHead(nn.Module):
         )
         self.sub_head_dimension = sub_head_dimension  # for scaling
 
-    def forward(self, x):
+    def forward(self, x, return_attention=False):
         B, T, C = x.shape
         q = self.query(x)
         k = self.key(x)
@@ -115,11 +115,14 @@ class SubHead(nn.Module):
         wei = self.dropout(wei)
         out = wei @ v
 
-        return out
+        if return_attention:
+            return out, wei
+        else:
+            return out
 
 
 class AttnHead(nn.Module):
-    def __init__(self, d_model, n_sub_heads, context_length, dropout=.1):
+    def __init__(self, d_model, n_sub_heads, context_length, dropout):
         super().__init__()
         sub_head_dim = d_model // n_sub_heads
         
@@ -140,8 +143,17 @@ class AttnHead(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def attention(self, x):
+        # indexing to 0 to just get the attended values
+
+        sub_heads_results = [sub_head(x, return_attention=True) for sub_head in self.sub_heads]
+        attended_values = [a[0] for a in sub_heads_results]
+        attention_weights = [a[1] for a in sub_heads_results]
+
+        # print(attention_weights)
+        breakpoint()
+        
         composite_head_output = torch.concat(
-            [sub_head(x) for sub_head in self.sub_heads], dim=-1
+            attended_values, dim=-1
         )
         attn_output = self.dropout(self.proj(composite_head_output))
         return attn_output
@@ -173,6 +185,7 @@ class GPT(nn.Module):
                     d_model=d_model,
                     n_sub_heads=n_sub_heads,
                     context_length=context_length,
+                    dropout=dropout
                 )
                 for _ in range(n_attn_layers)
             ]
@@ -209,15 +222,14 @@ class GPT(nn.Module):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--generate", action="store_true")
+    parser.add_argument("--prompt", default="")
     parser.add_argument("--model-file-name", default="multihead.torch")
     parser.add_argument("--training-data", default="big_book_chunk.txt")
-    return parser.parse_args()
+    args = parser.parse_args()
+    main(args)
 
 
-def main():
-
-    args = parse_args()
+def main(args):
 
     enc = tiktoken.get_encoding("gpt2")
     vocab_size = enc.n_vocab
@@ -256,8 +268,9 @@ def main():
     print(f"device: {device}")
 
     
-    if args.generate:
-        output = generate(model_dir, model_file_name, 50, "", enc, device, context_length)
+    if args.prompt:
+        print(f"The prompt is {args.prompt}")
+        output = generate(model_dir, model_file_name, 50, args.prompt, enc, device, context_length)
         print(output)
     else:
 
@@ -280,7 +293,7 @@ def main():
             model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.01
         )
 
-        loader_train, loader_val = load_data(enc, device, context_length, batch_size, training_data_file_name)
+        loader_train, loader_val = load_data(enc, context_length, batch_size, training_data_file_name)
 
         writer = SummaryWriter()
 
@@ -296,7 +309,7 @@ def main():
                 start = time.time()
                 xb = xb.to(device)
                 yb = yb.to(device)
-                logits = model.forward(xb)
+                logits = model(xb)
                 B, T, C = logits.shape
                 logits = logits.view(B * T, C)
                 targets = yb.view(B * T)
@@ -311,7 +324,7 @@ def main():
                         for xb, yb in loader_val:
                             B_b, T = xb.shape
                             val_loss += F.cross_entropy(
-                                model.forward(xb).view(B_b * T, C), yb.view(B_b * T)
+                                model(xb).view(B_b * T, C), yb.view(B_b * T)
                             )
                             val_counter += 1
                         pbar.set_postfix(
@@ -342,4 +355,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parse_args()
