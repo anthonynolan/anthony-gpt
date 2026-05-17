@@ -1,0 +1,3 @@
+Classify these sentences as positive or negative.
+
+Sentence: {sentence}

@@ -15,4 +15,5 @@ dependencies = [
     "setuptools<82",
     "transformers>=5.8.1",
     "accelerate>=1.13.0",
+    "datasets>=4.8.5",
 ]

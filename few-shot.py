@@ -11,13 +11,13 @@ def ask(prompt: str, max_tokens: int=5, debug: bool=False) -> str:
          "content": prompt}
     ]
 
-    text = tokenizer.apply_chat_template(messages,
-                                  tokenize=False,
-                                  add_generation_prompt=True)
+    # text = tokenizer.apply_chat_template(messages,
+    #                               tokenize=False,
+    #                               add_generation_prompt=True)
     
-    if debug: print(f'chat template applied {text}')
+    # if debug: print(f'chat template applied {text}')
 
-    inputs = tokenizer(text, return_tensors='pt').to(model.device)
+    inputs = tokenizer(prompt, return_tensors='pt').to(model.device)
 
     if debug: print(f'tokenized inputs: {inputs}')
 
@@ -37,8 +37,8 @@ def ask(prompt: str, max_tokens: int=5, debug: bool=False) -> str:
 
 if __name__=='__main__':
     debug = False    
-    # MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
-    MODEL_NAME = "Qwen/Qwen2.5-0.5B"
+    # MODEL_NAME = "EleutherAI/pythia-70m"
+    MODEL_NAME = "EleutherAI/pythia-410m"
 
     device = 'cuda' if cuda.is_available() else 'cpu'
 
@@ -54,7 +54,11 @@ if __name__=='__main__':
     user_input = input('?')
 
     while user_input:
-        print(ask(user_input, max_tokens=200, debug=debug))
+        with open('example_file.txt') as f:
+            template = f.read()
+            ready_for_ai = template.replace('{sentence}', user_input)
+            # print(f'ready for ai {ready_for_ai}')
+        print(ask(ready_for_ai, max_tokens=20, debug=debug))
         user_input = input('?')
 
 

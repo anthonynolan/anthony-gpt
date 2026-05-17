@@ -1,0 +1,10 @@
+Classify these sentences are positive or negative.
+
+Sentence: You are awful.
+Label: Negative.
+
+Sentence: It is a lovely day today
+Label: Positive
+
+Sentence: {sentence}
+Label: 
